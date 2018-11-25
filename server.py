@@ -127,12 +127,13 @@ class Server:
             if id in self.done_tasks:
                 result = self.done_tasks[id]['result']
                 self.done_tasks.pop(id, None)
+                self.task_numbers_lock.acquire()
+                if id in self.task_numbers:
+                    self.task_numbers.remove(id)
+                self.task_numbers_lock.release()
+
             else:
                 result = 'not_found'
-            self.task_numbers_lock.acquire()
-            if id in self.task_numbers:
-                self.task_numbers.remove(id)
-            self.task_numbers_lock.release()
 
             return result
 
