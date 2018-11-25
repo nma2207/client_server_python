@@ -8,6 +8,10 @@ import time
 
 
 def create_parser():
+    '''
+
+    :return: парсер командной строки
+    '''
     parser = argparse.ArgumentParser(
         prog = 'Client program',
         description = '''Program for sending command to server''',
@@ -35,11 +39,22 @@ def create_parser():
     return parser
 
 def get_request_json(namespace):
+    '''
+    :param namespace: параметры
+    :return: json описание команды
+    '''
     return {'command': namespace.command,
             'arg': namespace.argument}
 
 
 def send_one_command(ip, port, request):
+    '''
+
+    :param ip: ip сервера
+    :param port: port сервера
+    :param request: json описание команды
+    :return:
+    '''
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     try:
@@ -57,36 +72,49 @@ def send_one_command(ip, port, request):
         sock.close()
 
 def send_batch(namespace):
+    '''
+    Пакетный способ опроса сервера
+    :param namespace: параметры командной строки
+    :return:
+    '''
     ip = namespace.ip
     port = namespace.port
 
     request = get_request_json(namespace)
 
     data = send_one_command(ip, port, request)
-    print(data)
+
     if 'result' in data:
         result = data.get('result')
     else:
         print('bad response from server')
-    if namespace.command == 'get_status' or namespace.command == 'get_result':
+    if namespace.command == 'get_result':
         print('Result:', result)
         return
 
     isDone = False
 
     id = result
+    if namespace.command == 'get_status':
+        isDone = result == 'done'
+        id = namespace.argument
+
+
     while not isDone:
-        print('Get status...')
-        time.sleep(1)
-        request = {'command': 'get_status', 'arg':id}
-        data = send_one_command(ip, port, request)
-        if 'result' in data:
-            if data['result'] == 'done':
-                isDone = True
-            elif data['result'] == 'not_found':
-                print('server failed')
-                return
-            print('Task status:', data['result'])
+        try:
+            time.sleep(1)
+            request = {'command': 'get_status', 'arg':id}
+            data = send_one_command(ip, port, request)
+            if 'result' in data:
+                if data['result'] == 'done':
+                    isDone = True
+                elif data['result'] == 'not_found':
+                    print('server failed')
+                    return
+                print('Task status:', data['result'])
+        except KeyboardInterrupt:
+            print('Command running stop')
+            return
 
 
     request = {'command': 'get_result', 'arg': id}
@@ -107,7 +135,7 @@ def main():
     else:
         data = send_one_command(namespace.ip, namespace.port, get_request_json(namespace))
         if 'result' in data:
-            print(data['result'])
+            print('Result:', data['result'])
 
 
 if __name__ == "__main__":
