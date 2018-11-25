@@ -8,27 +8,45 @@ import threading
 import time
 
 class Server:
+    '''
+    Класс реализующий сервер
+    '''
     def __init__(self, port):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.bind(('localhost', port))
-        self.max_client_count = 10
-        self.sock.listen(self.max_client_count)
-
+        # Занимаемый порт
+        self.port = port
+        # Очередь задач ожидающих выполнения
         self.waiting_tasks = []
+        # Выполненные задачи, ключ - id задачи
         self.done_tasks = {}
-        self.in_progress = 0
 
+        # id выполняемой задачи
+        self.in_progress = 0
+        # Мьютексы для разделенного достпупа
         self.waiting_tasks_lock = threading.Lock()
         self.done_tasks_lock = threading.Lock()
         self.in_progress_lock = threading.Lock()
 
+        # id всех задач
         self.task_numbers = []
         self.task_numbers_lock = threading.Lock()
 
+        # Поток в котором будут выполняться задачи reverse и swap
         self.thread = threading.Thread(target = self.do_tasks)
-        self.thread.start()
+
+        #Семафор - количество ожидающих задач
+        self.do_task_semaphore = threading.Semaphore(0)
+        
 
     def run(self):
+        '''
+        Запускаем сервер
+        :return:
+        '''
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.bind(('localhost', self.port))
+        self.max_client_count = 10
+        self.sock.listen(self.max_client_count)
+
         print('Run server')
 
         while True:
@@ -36,10 +54,21 @@ class Server:
             print('Connected:', address)
             data = client.recv(1024).decode('utf-8')
             data = json.loads(data)
-            self.execute_command(client, data)
 
+            response = self.execute_command(data)
 
-    def execute_command(self, client, data):
+            response = json.dumps(response)
+            client.send(response.encode('utf-8'))
+            client.close()
+
+    def start_execute_thread(self):
+        '''
+        Запускаем поток для выполнения задач
+        :return:
+        '''
+        self.thread.start()
+
+    def execute_command(self, data):
         if 'command' in data:
             command = data['command']
             if command == 'get_status':
@@ -55,14 +84,16 @@ class Server:
         else:
             result = 'Bad request'
 
-
         response = {'result': result}
-        response = json.dumps(response)
+        return response
 
-        client.send(response.encode('utf-8'))
-        client.close()
 
     def get_status(self, id):
+        '''
+
+        :param id: id задачи
+        :return: статус
+        '''
         self.done_tasks_lock.acquire()
         self.waiting_tasks_lock.acquire()
         self.in_progress_lock.acquire()
@@ -86,49 +117,45 @@ class Server:
 
 
     def get_result(self, id):
-        with self.done_tasks_lock:
-            result = self.done_tasks.get(id, 'not_found')
-            if result != 'not_found':
-                result = self.done_tasks[id]['result']
+        '''
 
+        :param id: номер задачи
+        :return: результат или not_found
+        '''
+        with self.done_tasks_lock:
+            #result = self.done_tasks.get(id, 'not_found')
+            if id in self.done_tasks:
+                result = self.done_tasks[id]['result']
+                self.done_tasks.pop(id, None)
+            else:
+                result = 'not_found'
             self.task_numbers_lock.acquire()
-            self.task_numbers.remove(id)
+            if id in self.task_numbers:
+                self.task_numbers.remove(id)
             self.task_numbers_lock.release()
 
             return result
 
     def add_task(self, command):
+        '''
+
+        :param command: команда
+        :return: id задачт
+        '''
 
         with self.waiting_tasks_lock:
             number = self.find_number()
             command['id'] = number
             self.waiting_tasks.append(command)
+            self.do_task_semaphore.release()
             return number
 
-    def reverse(self, word):
-        print('reverse')
-        word_list = list(word)
-        for i in range(len(word_list) // 2):
-            #swap
-            word_list[i], word_list[-i - 1] = word_list[-i - 1], word_list[i]
-        result = ''.join(word_list)
-        time.sleep(3)
-        return result
-
-    def swap(self, word):
-        print('swap')
-        word_list = list(word)
-
-        for i in range(0, len(word_list)//2):
-            word_list[2 * i], word_list[2 * i+1] = word_list[2 * i+1], word_list[2 * i]
-        result = ''.join(word_list)
-
-        time.sleep(7)
-
-        return result
-
-
     def find_number(self):
+        '''
+        Находит минимальный свободный id.
+        нумерация начинается с 1
+        :return: id задачи
+        '''
         with self.task_numbers_lock:
             self.task_numbers.sort()
             if not self.task_numbers:
@@ -150,22 +177,23 @@ class Server:
             return number
 
     def do_tasks(self):
+        '''
+        Выполнение команд reverse и swap
+        :return:
+        '''
         while True:
-
-            time.sleep(0.5)
+            # Ожидаем, пока появится задача для выполнения
+            self.do_task_semaphore.acquire()
             with self.waiting_tasks_lock:
-                if not self.waiting_tasks:
-                    continue
-
                 task = self.waiting_tasks.pop(0)
-
+            #print('do command')
             with self.in_progress_lock:
                 self.in_progress = task['id']
 
             if task['command'] == 'reverse':
-                result = self.reverse(task['arg'])
+                result = reverse(task['arg'])
             elif task['command'] == 'swap':
-                result = self.swap(task['arg'])
+                result = swap(task['arg'])
 
             task['result'] = result
             with self.done_tasks_lock:
@@ -174,7 +202,44 @@ class Server:
             with self.in_progress_lock:
                 self.in_progress = 0
 
+            
+def reverse(word, sleep_time = 3):
+    '''
+
+    :param word: переворачиваемое слово
+    :param sleep_time: время выполнения команды
+    :return: результат выполнения
+    '''
+    word_list = list(word)
+    for i in range(len(word_list) // 2):
+        #swap
+        word_list[i], word_list[-i - 1] = word_list[-i - 1], word_list[i]
+    result = ''.join(word_list)
+    time.sleep(sleep_time)
+    return result
+
+def swap(word, sleep_time = 7):
+    '''
+
+    :param word: обрабатываемое слово
+    :param sleep_time: время "выполнения" задачи
+    :return: результат выполнения
+    '''
+    word_list = list(word)
+
+    for i in range(0, len(word_list)//2):
+        word_list[2 * i], word_list[2 * i+1] = word_list[2 * i+1], word_list[2 * i]
+    result = ''.join(word_list)
+
+    time.sleep(sleep_time)
+
+    return result
+
 def create_parser():
+    '''
+
+    :return: парсер командной строки
+    '''
     parser = argparse.ArgumentParser(
         prog = 'Client program',
         description = '''Program for sending command to server''',
@@ -193,7 +258,7 @@ def main():
     port = namespace.port
 
     server = Server(port)
-
+    server.start_execute_thread()
     server.run()
 
 if __name__ == "__main__":
