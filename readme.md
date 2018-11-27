@@ -12,7 +12,7 @@
 	Пример:
 	python server.py -p 8000
 	или 
-	python server
+	python server.py
 	
 Инструкция по запуску client.py
 ---
